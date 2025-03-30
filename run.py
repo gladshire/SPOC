@@ -506,9 +506,14 @@ def get_af_model_num(filename) -> int:
         :param filename: string representing the filename from which to extract the model number
     """ 
     
-    if "model_" not in filename: return 0
+    #if ".pdb" not in filename and ": return 0
 
-    model_num = int(re.findall(r'model_\d+', filename)[0].replace("model_", ''))
+
+    #model_num = int(re.findall(r'model_\d+', filename)[0].replace("model_", ''))
+    model_num = int(os.path.basename(os.path.dirname(filename))[-1]) + 1
+
+    print(model_num)
+
     return model_num
 
 
@@ -538,7 +543,7 @@ def get_filepaths_for_complex(path:str, complex_name:str, pattern:str = '*') -> 
     glob_str = os.path.join(path, complex_name + pattern)
     return sorted(glob.glob(glob_str))
 
-
+# TODO: Make this function work for AF3 output file scheme
 def get_data_from_json_file(json_filepath) -> list:
     """
         Returns a list of string values representing the pAE(predicated Aligned Error) values stored in the JSON output along with the PTM and IPTM values
@@ -867,6 +872,7 @@ def get_data(pdb_filepath:str, pae_filepath:str, map_data:dict, max_distance:flo
     """
 
     model_num = get_af_model_num(pdb_filepath)
+
     if model_num < 1 or model_num > 5:
         raise ValueError('There are only 5 Alphafold models, numbered 1 to 5. All PDB files and PAE files must have a valid AlphaFold model number to be analyzed.')
 
@@ -1300,10 +1306,18 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
 
     for folder_path in folder_paths:
 
-        pdb_file_paths = glob.glob(os.path.join(folder_path, '*.pdb')) + glob.glob(os.path.join(folder_path, '*.pdb.??'))
-        pae_file_paths = glob.glob(os.path.join(folder_path, '*.json')) + glob.glob(os.path.join(folder_path, '*.json.??'))
+        pair = os.path.basename(folder_path)
 
-        for pdb_file_path in pdb_file_paths:
+        #pdb_file_paths = glob.glob(os.path.join(folder_path, '*.pdb')) + glob.glob(os.path.join(folder_path, '*.pdb.??'))
+        pdb_file_paths = [os.path.join(folder_path, f'seed-1_sample-0/{pair}.pdb'),
+                          os.path.join(folder_path, f'seed-1_sample-1/{pair}.pdb'),
+                          os.path.join(folder_path, f'seed-1_sample_2/{pair}.pdb')]
+        #pae_file_paths = glob.glob(os.path.join(folder_path, '*_confidences.json')) + glob.glob(os.path.join(folder_path, '*_confidences.json.??'))
+        pae_file_paths = [os.path.join(folder_path, 'seed-1_sample-0/confidences.json'),
+                          os.path.join(folder_path, 'seed-1_sample-1/confidences.json'),
+                          os.path.join(folder_path, 'seed-1_sample-2/confidences.json')]
+
+        for model_num, pdb_file_path in enumerate(pdb_file_paths, 1):
 
             if name_filter and name_filter not in pdb_file_path:
                 continue
@@ -1312,20 +1326,16 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
             if pdb_filename.split('.').pop() not in ['gz', 'xz', 'pdb']:
                 continue
 
-            model_num = get_af_model_num(pdb_file_path)
+            #model_num = get_af_model_num(pdb_file_path)
             if model_num < 1 or model_num > 5:
                 continue
 
-            complex_name = None
-
-            if '_unrelaxed_' in pdb_filename:
-                complex_name = pdb_filename.split('_unrelaxed_')[0]
-
-            pae_filepath = None
-            for f in pae_file_paths:
-                if complex_name in f and f"model_{model_num}" in f: 
-                    pae_filepath = f
-                    break
+            complex_name = pair
+            pae_filepath = pae_file_paths[model_num - 1]
+            #for f in pae_file_paths:
+            #    if complex_name in f and f"model_{model_num}" in f: 
+            #        pae_filepath = f
+            #        break
 
             if pae_filepath.split('.').pop() not in ['gz', 'xz', 'json']:
                 continue
