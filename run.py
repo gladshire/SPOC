@@ -512,8 +512,6 @@ def get_af_model_num(filename) -> int:
     #model_num = int(re.findall(r'model_\d+', filename)[0].replace("model_", ''))
     model_num = int(os.path.basename(os.path.dirname(filename))[-1]) + 1
 
-    print(model_num)
-
     return model_num
 
 
@@ -543,47 +541,58 @@ def get_filepaths_for_complex(path:str, complex_name:str, pattern:str = '*') -> 
     glob_str = os.path.join(path, complex_name + pattern)
     return sorted(glob.glob(glob_str))
 
-# TODO: Make this function work for AF3 output file scheme
-def get_data_from_json_file(json_filepath) -> list:
+
+def get_data_from_json_file(confidence_json, summary_json) -> list:
     """
         Returns a list of string values representing the pAE(predicated Aligned Error) values stored in the JSON output along with the PTM and IPTM values
 
         :param json_filepath: string representing the JSON filename from which to extract the PAE values
     """ 
 
-    if not os.path.isfile(json_filepath):
-        raise ValueError('Non existing PAE file was specified')
+    if not os.path.isfile(confidence_json) or not os.path.isfile(summary_json):
+        raise ValueError('Non existing file was specified')
+
+    confidence_file = None 
+    if(confidence_json.endswith('.xz')):
+        confidence_file = lzma.open(confidence_json, 'rt')
+    elif(confidence_json.endswith('.gz')):
+        confidence_file = gzip.open(confidence_json,'rt')
+    elif (confidence_json.endswith('.json')):
+        confidence_file = open(confidence_json,'rt')
+    else:
+        raise ValueError('File with invalid extension cannot be analyzed. Only valid JSON files can be analyzed.')
 
     scores_file = None 
-    if(json_filepath.endswith('.xz')):
-        scores_file = lzma.open(json_filepath, 'rt')
-    elif(json_filepath.endswith('.gz')):
-        scores_file = gzip.open(json_filepath,'rt')
-    elif (json_filepath.endswith('.json')):
-        scores_file = open(json_filepath,'rt')
+    if(summary_json.endswith('.xz')):
+        scores_file = lzma.open(summary_json, 'rt')
+    elif(summary_json.endswith('.gz')):
+        scores_file = gzip.open(summary_json,'rt')
+    elif (summary_json.endswith('.json')):
+        scores_file = open(summary_json,'rt')
     else:
-        raise ValueError('pAE file with invalid extension cannot be analyzed. Only valid JSON files can be analyzed.')
+        raise ValueError('File with invalid extension cannot be analyzed. Only valid JSON files can be analyzed.')
 
-    #read pae file in as text
     try:
-        file_text = scores_file.read()
-        pae_index = file_text.find('"pae":')
-        ptm_index = file_text.find('"ptm":')
-        iptm_index = file_text.find('"iptm":')
-        scores_file.close()
+        confidence_data = json.load(confidence_file)
+        pae_data = confidence_data['pae']
+
+        scores_data = json.load(scores_file)
+        ptm = float(scores_data['ptm'])
+        iptm = float(scores_data['iptm'])
     except:
-        print("Could not parse json_filepath")
-        raise ValueError('Could not parse JSON file')
+        print("Could not parse data from JSON")
+        raise ValueError("Could not parse JSON file")
+
     
     #Transform string representing 2d array into a 1d array of strings (each string is 1 pAE value). We save time by not unecessarily converting them to numbers before we use them.
-    pae_data = file_text[pae_index + 6:file_text.find(']]', pae_index) + 2].replace('[','').replace(']','').split(',')
+    #pae_data = file_text[pae_index + 6:file_text.find(']]', pae_index) + 2].replace('[','').replace(']','').split(',')
 
-    if len(pae_data) != int(math.sqrt(len(pae_data)))**2:
+    if len(pae_data) != round(math.sqrt(len(pae_data)) ** 2):
         #all valid pAE files consist of an N x N matrice of scores
         raise ValueError('pAE values could not be parsed from files')
     
-    ptm = float(file_text[ptm_index + 6:file_text.find(',', ptm_index)])
-    iptm = float(file_text[iptm_index + 7:].replace('}', ''))
+    #ptm = float(file_text[ptm_index + 6:file_text.find(',', ptm_index)])
+    #iptm = float(file_text[iptm_index + 7:].replace('}', ''))
     return pae_data, ptm, iptm
 
 
@@ -696,6 +705,7 @@ def get_lines_from_pdb_file(pdb_filepath:str) -> list:
     
     pdb_data = pdb_file.read()
     pdb_file.close()
+
     return pdb_data.splitlines()
 
 
@@ -729,6 +739,7 @@ def get_sequences(pdb_filepath:str)->dict:
     
     return sequences 
 
+# TODO: Fix this function. Should 
 def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:float = 70, within_chain = False):
     """
         Returns a dict that contains all amino acids between different chains that are in contact and meet the specified criteria
@@ -759,7 +770,7 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
     for atom_line in get_lines_from_pdb_file(pdb_filepath):
         if atom_line[0:4] != 'ATOM':
             continue
-        
+
         atom_type = atom_line[13:16].strip()
         chain = atom_line[20:22].strip()
         aa_type = aa_3c_to_1c[atom_line[17:20]]
@@ -859,12 +870,13 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
 
 
 
-def get_data(pdb_filepath:str, pae_filepath:str, map_data:dict, max_distance:float=5,min_plddt:float=50, max_pae:float=15) -> dict:
+def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:dict, max_distance:float=5, min_plddt:float=50, max_pae:float=15) -> dict:
     """
         Get contacts from a protein structure in PDB format that meet the specified distance and confidence criteria.
 
         :param pdb_filepath (str): The path to the PDB file.
-        :param pae_filepath (str): The path to the predicted Alignment Error (pAE) file.
+        :param pae_filepath (str): The path to the JSON containing predicted Alignment Error (pAE).
+        :param score_filepath (str): The path to the JSON containing summary of scores (pTM, ipTM).
         :param max_distance (float): The maximum distance between two atoms for them to be considered in contact.
         :param min_plddt (float): The minimum PLDDT score required for a residue to be considered "well-modeled".
         :param max_pae (float): The maximum predicted Alignment Error allowed for a residue to be considered "well-modeled".
@@ -880,12 +892,12 @@ def get_data(pdb_filepath:str, pae_filepath:str, map_data:dict, max_distance:flo
         raise ValueError(f"File mismatch, can only compare PDB and PAE files from same complex and the same AF2 model PDB:({pdb_filepath}) PAE:({pae_filepath})")
 
     try:
-        pae_data, ptm, iptm = get_data_from_json_file(pae_filepath)
+        pae_data, ptm, iptm = get_data_from_json_file(pae_filepath, score_filepath)
     except Exception as e:
         print(f"Exception occurred during JSON file parsing {e}")
         return None
 
-    total_aa_length = int(math.sqrt(len(pae_data)))
+    total_aa_length = len(pae_data)
 
     try:
         unfiltered_contacts, aa_sequence, unfiltered_plddts = get_data_from_structure(pdb_filepath, max_distance, 0, False)
@@ -920,9 +932,21 @@ def get_data(pdb_filepath:str, pae_filepath:str, map_data:dict, max_distance:flo
     for c in unfiltered_contacts:
 
         aas = [c['aa1'], c['aa2']]
+
         aa_indices = [aas[0]['a_ix'],aas[1]['a_ix']]
+
+        print(aa_indices)
+        print(c['aa1'])
+        print(c['aa2'])
+
+        #pae_index_1 = 
+
         pae_index_1 = total_aa_length*(aa_indices[0] - 1) + aa_indices[1] - 1
         pae_index_2 = total_aa_length*(aa_indices[1] - 1) + aa_indices[0] - 1
+
+        print(pae_index_1)
+        print(pae_index_2)
+        print(len(pae_data))
 
         if pae_index_1 >= len(pae_data) or pae_index_2 >= len(pae_data):
             raise ValueError(f"Something went wrong and we are attempting to access non-existant PAE values for PDB file: {pdb_filepath} from PAE file: {pae_filepath}")
@@ -1204,9 +1228,10 @@ def analyze_complex(complex_name:str, complexes:dict):
         best_interface_stats = None
 
         for model_num in models:
-            pdb_filepath, pae_filepath = complexes[complex_name][model_num]
+            pdb_filepath, pae_filepath, scores_filepath = complexes[complex_name][model_num]
 
-            data = get_data(pdb_filepath, pae_filepath, seq_map)
+            data = get_data(pdb_filepath, pae_filepath,
+                            scores_filepath, seq_map)
             contacts = data['contacts']
             interface_contacts[model_num] = contacts
             if_stats = calculate_interface_statistics(contacts)
@@ -1308,14 +1333,15 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
 
         pair = os.path.basename(folder_path)
 
-        #pdb_file_paths = glob.glob(os.path.join(folder_path, '*.pdb')) + glob.glob(os.path.join(folder_path, '*.pdb.??'))
         pdb_file_paths = [os.path.join(folder_path, f'seed-1_sample-0/{pair}.pdb'),
                           os.path.join(folder_path, f'seed-1_sample-1/{pair}.pdb'),
                           os.path.join(folder_path, f'seed-1_sample_2/{pair}.pdb')]
-        #pae_file_paths = glob.glob(os.path.join(folder_path, '*_confidences.json')) + glob.glob(os.path.join(folder_path, '*_confidences.json.??'))
         pae_file_paths = [os.path.join(folder_path, 'seed-1_sample-0/confidences.json'),
                           os.path.join(folder_path, 'seed-1_sample-1/confidences.json'),
                           os.path.join(folder_path, 'seed-1_sample-2/confidences.json')]
+        scores_file_paths = [os.path.join(folder_path, 'seed-1_sample-0/summary_confidences.json'),
+                             os.path.join(folder_path, 'seed-1_sample-1/summary_confidences.json'),
+                             os.path.join(folder_path, 'seed-1_sample-2/summary_confidences.json')]
 
         for model_num, pdb_file_path in enumerate(pdb_file_paths, 1):
 
@@ -1332,6 +1358,7 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
 
             complex_name = pair
             pae_filepath = pae_file_paths[model_num - 1]
+            scores_filepath = scores_file_paths[model_num - 1]
             #for f in pae_file_paths:
             #    if complex_name in f and f"model_{model_num}" in f: 
             #        pae_filepath = f
@@ -1343,7 +1370,9 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
             if complex_name not in complexes:
                 complexes[complex_name] = {}
             
-            complexes[complex_name][model_num] = [pdb_file_path, pae_filepath]
+            complexes[complex_name][model_num] = [pdb_file_path, pae_filepath, scores_filepath]
+
+            print(complexes)
 
 
     if len(complexes) > 0:
