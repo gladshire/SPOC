@@ -684,11 +684,12 @@ def get_res_contact_score(contact):
 
 
 def get_lines_from_pdb_file(pdb_filepath:str) -> list:
+
     """
         Returns the contents of a protein databank file (PDB) file as a list of strings
 
         :param pdb_filepath: string representing the path of the PDB file to open and parse (can handle PDB files that have been compressed via GZIP or LZMA)
-    """ 
+    """
 
     if not os.path.isfile(pdb_filepath):
         raise ValueError('Non existing PDB file was specified')
@@ -739,7 +740,6 @@ def get_sequences(pdb_filepath:str)->dict:
     
     return sequences 
 
-# TODO: Fix this function. Should 
 def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:float = 70, within_chain = False):
     """
         Returns a dict that contains all amino acids between different chains that are in contact and meet the specified criteria
@@ -760,6 +760,7 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
     chains = []
 
     residues = []
+    residue = {}
 
     #holds 3d coordinates of all amide nitrogens for all residues
     #organized as a 2d list with rows representing chains and columns are residues within the chain
@@ -778,6 +779,7 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
         #in AlphaFold output PDB files, pLDDT values are stored in the "bfactor" column 
         bfactor = float(atom_line[60:66])
         if(is_nitrogen):
+
             #Keep track of what the absolute index of this residue in the file is 
             abs_res_index += 1
             if chain != last_chain_2: 
@@ -787,6 +789,9 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
             
             pdb_res_sequence += aa_type
             plddts.append(bfactor)
+
+
+        #residue = {"chain":chain, "atoms":[],'c_ix':int(atom_line[22:26]), "a_ix":abs_res_index, "type":aa_type, "plddt":bfactor}
 
         if bfactor < min_plddt:
             #No need to examine this atom since it does not meet the pLDDT cutoff, skip it
@@ -805,6 +810,7 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
                 chains.append(chain)
 
             residue = {"chain":chain, "atoms":[],'c_ix':int(atom_line[22:26]), "a_ix":abs_res_index, "type":aa_type, "plddt":bfactor}
+
             residues[chain_index].append(residue)
 
             #add nitrogen atom coordinates to coordinates list to allow for fast broad searching later
@@ -833,12 +839,15 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
 
             #calculate euclidian distance squared (faster) between all amide nitorgens of all residues
             d2s = np.sum((c1_matrix - c2_matrix)**2, axis=2)
+
             #get residue pairs where amide nitrogens are closer than the initial broad cutoff
             index_pairs = list(zip(*np.where(d2s < d2_n_cutoff)))
 
+            #print(index_pairs)
+
             #find closest atoms between residues that were found to be somewhat in proximity
             for c1_res_ix, c2_res_ix in index_pairs:
-                
+               
                 r1 = residues[i][c1_res_ix]
                 r2 = residues[i2][c2_res_ix]
 
@@ -866,6 +875,7 @@ def get_data_from_structure(pdb_filepath:str, max_distance:float = 8, min_plddt:
                         "aa1":{"chain":r1["chain"], "ca":r1_ca, "type":r1["type"], "c_ix":r1['c_ix'], "a_ix":r1['a_ix'], "plddt": r1["plddt"]},
                         "aa2":{"chain":r2["chain"], "ca":r2_ca, "type":r2["type"], "c_ix":r2['c_ix'], "a_ix":r2['a_ix'], "plddt": r2["plddt"]}
                     })
+
     return contacts, pdb_res_sequence, plddts
 
 
@@ -901,8 +911,11 @@ def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:di
 
     try:
         unfiltered_contacts, aa_sequence, unfiltered_plddts = get_data_from_structure(pdb_filepath, max_distance, 0, False)
+        print("Unfiltered contacts retrieved")
+
         #first determine which residues are in physical contact(distance) and have a minimum pLDDT score (bfactor column)
         contacts, aa_sequence, plddts = get_data_from_structure(pdb_filepath, max_distance, min_plddt, False)
+        print("Filtered contacts retrieved")
     except Exception as e:
         print(f"Exception occurred during PDB file parsing: {e}")
         return None
@@ -915,6 +928,7 @@ def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:di
     clashing_residue_indices = {}
     for c in contacts:
         if c['clashing']:
+            print("Clash")
             clashing_residue_indices[c['aa1']['a_ix']] = 1
             clashing_residue_indices[c['aa2']['a_ix']] = 1
 
@@ -929,29 +943,21 @@ def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:di
     contacts = new_contacts
 
     unfiltered_if_paes = []
+
     for c in unfiltered_contacts:
 
         aas = [c['aa1'], c['aa2']]
 
         aa_indices = [aas[0]['a_ix'],aas[1]['a_ix']]
 
-        print(aa_indices)
-        print(c['aa1'])
-        print(c['aa2'])
-
-        #pae_index_1 = 
-
-        pae_index_1 = total_aa_length*(aa_indices[0] - 1) + aa_indices[1] - 1
-        pae_index_2 = total_aa_length*(aa_indices[1] - 1) + aa_indices[0] - 1
-
-        print(pae_index_1)
-        print(pae_index_2)
-        print(len(pae_data))
+        pae_index_1 = aa_indices[0] - 1
+        pae_index_2 = aa_indices[1] - 1
 
         if pae_index_1 >= len(pae_data) or pae_index_2 >= len(pae_data):
             raise ValueError(f"Something went wrong and we are attempting to access non-existant PAE values for PDB file: {pdb_filepath} from PAE file: {pae_filepath}")
 
-        unfiltered_if_paes += [float(pae_data[pae_index_1]), float(pae_data[pae_index_2])]
+        unfiltered_if_paes += [pae_data[pae_index_1][pae_index_2],
+                               pae_data[pae_index_2][pae_index_1]]
 
 
     if len(unfiltered_if_paes) == 0: unfiltered_if_paes = [30]
@@ -982,14 +988,15 @@ def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:di
         pae_values = [0, 0]
         pae_value = 0
 
-        pae_index_1 = total_aa_length*(aa_indices[0] - 1) + aa_indices[1] - 1
-        pae_index_2 = total_aa_length*(aa_indices[1] - 1) + aa_indices[0] - 1
+        pae_index_1 = aa_indices[0] - 1
+        pae_index_2 = aa_indices[1] - 1
 
         if pae_index_1 >= len(pae_data) or pae_index_2 >= len(pae_data):
             raise ValueError(f"Something went wrong and we are attempting to access non-existant PAE values for PDB file: {pdb_filepath} from PAE file: {pae_filepath}")
 
         #pae data contains string values, have to convert them to floats before using them for math calculations
-        pae_values = [float(pae_data[pae_index_1]), float(pae_data[pae_index_2])]
+        pae_values = [pae_data[pae_index_1][pae_index_2],
+                      pae_data[pae_index_2][pae_index_1]]
         pae_value = min(pae_values[0],pae_values[1])
         
         if(pae_value > max_pae):
@@ -1036,6 +1043,7 @@ def get_data(pdb_filepath:str, pae_filepath:str, score_filepath:str, map_data:di
             'atom_contacts':c['atom_contacts'],
             'af_missense':af_missense_scores
         }
+
 
     return {'total_length':total_aa_length,
             'contacts':filtered_contacts, 
@@ -1331,11 +1339,16 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
 
     for folder_path in folder_paths:
 
-        pair = os.path.basename(folder_path)
+        path = os.path.split(folder_path)
+        if path[0] == "":
+            pair = path[1]
+        else:
+            pair = path[0]
+
 
         pdb_file_paths = [os.path.join(folder_path, f'seed-1_sample-0/{pair}.pdb'),
                           os.path.join(folder_path, f'seed-1_sample-1/{pair}.pdb'),
-                          os.path.join(folder_path, f'seed-1_sample_2/{pair}.pdb')]
+                          os.path.join(folder_path, f'seed-1_sample-2/{pair}.pdb')]
         pae_file_paths = [os.path.join(folder_path, 'seed-1_sample-0/confidences.json'),
                           os.path.join(folder_path, 'seed-1_sample-1/confidences.json'),
                           os.path.join(folder_path, 'seed-1_sample-2/confidences.json')]
@@ -1372,8 +1385,6 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
             
             complexes[complex_name][model_num] = [pdb_file_path, pae_filepath, scores_filepath]
 
-            print(complexes)
-
 
     if len(complexes) > 0:
 
@@ -1399,6 +1410,7 @@ def main(folder_paths:list, name_filter:str, classifier, output_name:str):
         for cname in data:
 
             cdata = data[cname]
+
             if type(cdata) == str: #only occurs when there is an error and the string error message has been assigned
                 continue
 
